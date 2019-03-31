@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  Demonstration template showing EC2 creation.  We give that instance the AmazonEC2RoleforSSM Instance Profile
+  allowing us to connect to is via SSM Session Manager.  We also set up CloudWatch Logs to elevate transparency
+  of the process and aid in troubleshooting.
+  For this example you will need an existing VPC with a Public subnet.
+
+Parameters:
+  LatestAmiId:
+    # Use public Systems Manager Parameter for AMI Image name
+    # https://aws.amazon.com/blogs/compute/query-for-the-latest-amazon-linux-ami-ids-using-aws-systems-manager-parameter-store/
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Description: Select Amazon Linux(1) or 2
+    Default: /aws/service/ami-amazon-linux-latest/amzn-ami-hvm-x86_64-gp2
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/amzn-ami-hvm-x86_64-gp2 # Amazon Linux [1]
+      - /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2 # Amazon Linux 2
+  InstanceType:
+    Type: String
+    Default: t2.nano
+    Description: Select an instance type
+    AllowedValues:
+      - t2.nano
+      - t2.micro
+      - t3.nano
+      - t3.micro
+
+  VpcPlacement:
+    Description: Choose the VPC to place this EC2 instance
+    Type: AWS::EC2::VPC::Id
+  SubnetPlacement:
+    Description: Choose a PUBLIC subnet that RESIDES in the VPC you chose
+    Type: AWS::EC2::Subnet::Id
+
+Resources:
+
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    Metadata:
+      Comment: Install configure CWLogs
+      AWS::CloudFormation::Init:
+        config:
+          files:
+            # Build our CWLogs Agent Configuration File, used in cloud init UserData below
+            # see https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/AgentReference.html
+            "/tmp/ssm-cwlogs.conf":
+              content: !Sub |
+                [general]
+                state_file= /var/awslogs/agent-state
+                # SSM Agent Logs
+                # https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-agent-logs.html
+                [/var/log/amazon/ssm/amazon-ssm-agent.log]
+                file = /var/log/amazon/ssm/amazon-ssm-agent.log
+                log_group_name = ${Ec2InstanceSsmAgentLogGroup}
+                log_stream_name = {instance_id}/ssm-agent.log
+                datetime_format = %Y-%m-%d %H:%M:%S
+                [/var/log/amazon/ssm/errors.log]
+                file = /var/log/amazon/ssm/errors.log
+                log_group_name = ${Ec2InstanceSsmErrorLogGroup}
+                log_stream_name = {instance_id}/ssm-error.log
+                datetime_format = %Y-%m-%d %H:%M:%S
+
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      # KeyName: NO SSH Key needed
+      IamInstanceProfile: !Ref Ec2InstanceProfile
+      NetworkInterfaces:
+        # TODO: remove Public IP
+        # The SSM Agent running on the EC2 instances must be able to connect to Session Manager?s 
+        # public endpoint. You can also set up a PrivateLink connection to allow instances running 
+        # in private VPCs (without Internet access or a public IP address) to connect to Session Manager.
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref Ec2InstanceSecurityGroup
+          SubnetId: !Ref SubnetPlacement
+      Tags:
+        - Key: Name
+          Value: SSM Session Manager Test
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          # Get the latest CloudFormation package
+          yum update -y aws-cfn-bootstrap
+          # Start cfn-init
+          /opt/aws/bin/cfn-init -s ${AWS::StackId} -r Ec2Instance --region ${AWS::Region} || error_exit 'Failed to run cfn-init'
+          # Get the CloudWatch Logs agent
+          yum install -y awslogs
+          # Install the CloudWatch Logs agent (works with AWS Linux[1] or 2)
+          if command -v systemctl >/dev/null; then systemctl start awslogsd; else service awslogs start; fi
+          # Enable start on reboot (works with AWS Linux[1] or 2)
+          if command -v systemctl >/dev/null; then systemctl enable awslogsd.service; else chkconfig awslogs on; fi
+          # All done so signal success
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource Ec2Instance --region ${AWS::Region}
+
+  Ec2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles: [ !Ref Ec2InstanceRole ]
+
+  # By default, AWS Systems Manager doesn't have permission to perform actions on your instances. 
+  # You must grant access by using an AWS Identity and Access Management (IAM) instance profile.
+  # https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-configuring-access-role.html
+  Ec2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ ec2.amazonaws.com ]
+            Action:
+              - sts:AssumeRole
+      Path: /
+
+  # Attaching an SG with NO Ingress ports open
+  Ec2InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Test SG for SSM Session Manager
+      VpcId: !Ref VpcPlacement
+      # demonstrating SSM Session Manager can connect to Instance with no SG ingress openings
+      # SecurityGroupIngress:
+      SecurityGroupEgress:
+        - IpProtocol: -1 # all
+          FromPort: -1 # all
+          ToPort: -1 # all
+          CidrIp: 0.0.0.0/0
+
+  Ec2InstanceSsmAgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+  Ec2InstanceSsmErrorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+
+Outputs:
+  SessionManagementUrl:
+    Description: The URL to the Session Management Console for this instance
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/systems-manager/session-manager/${Ec2Instance}?region=${AWS::Region}
