@@ -106,6 +106,9 @@ Resources:
           if command -v systemctl >/dev/null; then systemctl start awslogsd; else service awslogs start; fi
           # Enable start on reboot (works with AWS Linux[1] or 2)
           if command -v systemctl >/dev/null; then systemctl enable awslogsd.service; else chkconfig awslogs on; fi
+          # change the login shell for ssm-user, although amazon-ssm-agent still forces /bin/sh
+          # https://github.com/aws/amazon-ssm-agent/issues/131
+          usermod --shell /bin/bash ssm-user
           # All done so signal success
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource Ec2Instance --region ${AWS::Region}
 
