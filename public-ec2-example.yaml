@@ -44,10 +44,11 @@ Resources:
           files:
             # Build our CWLogs Agent Configuration File, used in cloud init UserData below
             # see https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/AgentReference.html
-            "/tmp/ssm-cwlogs.conf":
+            "/etc/awslogs/awslogs.conf":
               content: !Sub |
+                # writen by aws clodformation stack ${AWS::StackId}
                 [general]
-                state_file= /var/awslogs/agent-state
+                state_file = /var/awslogs/agent-state
                 # SSM Agent Logs
                 # https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-agent-logs.html
                 [/var/log/amazon/ssm/amazon-ssm-agent.log]
@@ -60,6 +61,15 @@ Resources:
                 log_group_name = ${Ec2InstanceSsmErrorLogGroup}
                 log_stream_name = {instance_id}/ssm-error.log
                 datetime_format = %Y-%m-%d %H:%M:%S
+            # The log group will be created in region specified in /etc/awslogs/awscli.conf
+            # overwrite that file to points to this region
+            "/etc/awslogs/awscli.replace.conf":
+              content: !Sub |
+                # writen by aws clodformation stack ${AWS::StackId}
+                [plugins]
+                cwlogs = cwlogs
+                [default]
+                region = ${AWS::Region}
 
     Properties:
       ImageId: !Ref LatestAmiId
@@ -86,8 +96,12 @@ Resources:
           yum update -y aws-cfn-bootstrap
           # Start cfn-init
           /opt/aws/bin/cfn-init -s ${AWS::StackId} -r Ec2Instance --region ${AWS::Region} || error_exit 'Failed to run cfn-init'
+          # make the needed dir for the cwlogs state_file
+          mkdir /var/awslogs
           # Get the CloudWatch Logs agent
           yum install -y awslogs
+          # overwrite awscli.conf with our copy
+          mv /etc/awslogs/awscli.replace.conf /etc/awslogs/awscli.conf
           # Install the CloudWatch Logs agent (works with AWS Linux[1] or 2)
           if command -v systemctl >/dev/null; then systemctl start awslogsd; else service awslogs start; fi
           # Enable start on reboot (works with AWS Linux[1] or 2)
@@ -145,3 +159,9 @@ Outputs:
   SessionManagementUrl:
     Description: The URL to the Session Management Console for this instance
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/systems-manager/session-manager/${Ec2Instance}?region=${AWS::Region}
+  CloudWatchLogsSsmAgentLog:
+    Description: The URL to the Session Management Console for this instance
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logEventViewer:group=${Ec2InstanceSsmAgentLogGroup};stream=${Ec2Instance}/ssm-agent.log
+  CloudWatchLogsSsmAgentErrorLog:
+    Description: The URL to the Session Management Console for this instance
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logEventViewer:group=${Ec2InstanceSsmErrorLogGroup};stream=${Ec2Instance}/ssm-error.log
