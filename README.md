@@ -12,12 +12,34 @@ The `public-ec2-example.yaml` shows how you can enable connection to an EC2 inst
 subnet (Think; Bastion Host) via Session Manager rather than ssh.  This reduces the attack surface by shutting down the ssh port 
 and removing the need to manage ssh keys for admins and developers.
 
+To demonstrate it simply run the CloudFormation template `public-ec2-example.yaml`, then follow the `SessionManagementUrl` 
+listed in the template outputs.
+![](./docs/img/cf-outputs.png)
+As easy as that you will be logged into the EC2 instance as the admin user; `ssm-user`
+![](./docs/img/term-screen.png)
+
 If we think about it though, a tool such as SSM Session manager removes the need for Bastions Hosts all together.
 We can directly connect to EC2 hosts in private subnets via SSM Session Manager, removing the need to *poke holes* in the DMZ
 in order to gain access.
 
 Enabling this connection to *private* EC2 hosts involves creating VPC Endpoints for SSM to utilize. The `private-ec2-example.yaml`
 template builds this scenario.
+
+## Benefits
+
+### Reduced Attack Surface
+
+You can run with no publicly exposed ports and possibly even no bastion hosts in public subnets.
+
+### Reduce permissions for ssm-user
+
+You can choose to reduce the permissions for the `ssm-user`, leaving the elevated `ec2-user` for Sysadmin use.
+
+### Session Logs are persisted
+
+You can alert on and audit these logs for suspicious behavior. 
+
+
 
 ## Preconditions For SSM Session Management
 There are a few preconditions required in order for SSM Session Manager to be able to connect to an EC2 instance.
@@ -37,4 +59,12 @@ that can be attached which gives SSM the required permissions to manage the inst
 This policy is a good starting point, examine it's permissions and determine if you want to go to production with it, if not 
 you can provide your own scoped down policy.  Minimally you may want to limit S3 access to just what is needed by the instance and 
 [SSM](https://docs.aws.amazon.com/systems-manager/latest/userguide/ssm-agent-minimum-s3-permissions.html).
+
+### Persist Session Output [optional]
+
+In the SSM Session Manager [preferences](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-logging-auditing.html) 
+you can select to have session data including STDOUT recorded in an S3 bucket and/or CloudWatch Logs.  This gives 
+you a great mechanism for alerting on session activity or as an aid to forensics.
+
+![](./docs/img/ssm-pref-screen.png)
 

@@ -26,12 +26,46 @@ Parameters:
       - t3.nano
       - t3.micro
 
-  VpcPlacement:
-    Description: Choose the VPC to place this EC2 instance
-    Type: AWS::EC2::VPC::Id
-  SubnetPlacement:
-    Description: Choose a PUBLIC subnet that RESIDES in the VPC you chose
-    Type: AWS::EC2::Subnet::Id
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.192.0.0/16
+  PublicSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.10.0/24
+  PublicSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+    Type: String
+    Default: 10.192.11.0/24
+  PrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.20.0/24
+  PrivateSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.192.21.0/24
+
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "EC2 Settings"
+        Parameters:
+            - LatestAmiId
+            - InstanceType
+      -
+        Label:
+          default: "We create a boilerplate VPC to place the EC2 instance into"
+        Parameters:
+            - VpcCIDR
+            - PublicSubnet1CIDR
+            - PublicSubnet2CIDR
+            - PrivateSubnet1CIDR
+            - PrivateSubnet2CIDR
 
 Resources:
 
@@ -77,15 +111,14 @@ Resources:
       # KeyName: NO SSH Key needed
       IamInstanceProfile: !Ref Ec2InstanceProfile
       NetworkInterfaces:
-        # TODO: remove Public IP
-        # The SSM Agent running on the EC2 instances must be able to connect to Session Manager?s 
-        # public endpoint. You can also set up a PrivateLink connection to allow instances running 
+        # The SSM Agent running on the EC2 instances must be able to connect to Session Manager?s
+        # public endpoint. You can also set up a PrivateLink connection to allow instances running
         # in private VPCs (without Internet access or a public IP address) to connect to Session Manager.
         - AssociatePublicIpAddress: true
           DeviceIndex: 0
           GroupSet:
             - !Ref Ec2InstanceSecurityGroup
-          SubnetId: !Ref SubnetPlacement
+          SubnetId: !Ref PublicSubnet1
       Tags:
         - Key: Name
           Value: SSM Session Manager Test
@@ -118,7 +151,7 @@ Resources:
       Path: /
       Roles: [ !Ref Ec2InstanceRole ]
 
-  # By default, AWS Systems Manager doesn't have permission to perform actions on your instances. 
+  # By default, AWS Systems Manager doesn't have permission to perform actions on your instances.
   # You must grant access by using an AWS Identity and Access Management (IAM) instance profile.
   # https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-configuring-access-role.html
   Ec2InstanceRole:
@@ -140,7 +173,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Test SG for SSM Session Manager
-      VpcId: !Ref VpcPlacement
+      VpcId: !Ref VPC
       # demonstrating SSM Session Manager can connect to Instance with no SG ingress openings
       # SecurityGroupIngress:
       SecurityGroupEgress:
@@ -158,13 +191,164 @@ Resources:
     Properties:
       RetentionInDays: 7
 
+
+  ###############################
+  # Everything below here is just a boilerplate VPC
+  # used to place the EC2 into a realistic scenario
+  # There are no SSM specific features in the VPC, so
+  # for the purposes of this exercise, it can be ignored.
+  ######
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub Public Subnet (AZ1)
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub Public Subnet (AZ2)
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub Private Subnet (AZ1)
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub Private Subnet (AZ2)
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub Public Routes
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub Private Routes (AZ1)
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub Private Routes (AZ2)
+
+  DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  NoIngressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "no-ingress-sg"
+      GroupDescription: "Security group with no ingress rule"
+      VpcId: !Ref VPC
+
 Outputs:
   SessionManagementUrl:
     Description: The URL to the Session Management Console for this instance
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/systems-manager/session-manager/${Ec2Instance}?region=${AWS::Region}
   CloudWatchLogsSsmAgentLog:
-    Description: The URL to the Session Management Console for this instance
+    Description: The URL to the CloudWatch Logs for the SSM Agent log
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logEventViewer:group=${Ec2InstanceSsmAgentLogGroup};stream=${Ec2Instance}/ssm-agent.log
   CloudWatchLogsSsmAgentErrorLog:
-    Description: The URL to the Session Management Console for this instance
+    Description: The URL to the CloudWatch Logs for the SSM Agent error log
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logEventViewer:group=${Ec2InstanceSsmErrorLogGroup};stream=${Ec2Instance}/ssm-error.log
