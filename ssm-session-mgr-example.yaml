@@ -1,10 +1,11 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Description: >
-  Demonstration template showing EC2 creation.  We give that instance the AmazonEC2RoleforSSM Instance Profile
-  allowing us to connect to is via SSM Session Manager.  We also set up CloudWatch Logs to elevate transparency
-  of the process and aid in troubleshooting.
-  For this example you will need an existing VPC with a Public subnet.
+  In this template we are demonstrating an EC2 with SSM Session Manager enabled.  We have two instances; one in
+  a public subnetThe and one in a private subnet.  SSM Agent running on the EC2 instances must be able to connect
+  to Session Manager’s public endpoint.  Thus for the public instance we utilize its public ip and route to
+  an Internet Gateway and for the private instance we utilize a route to a NAT Gateway.
+  see: https://aws.amazon.com/blogs/aws/new-session-manager/
 
 Parameters:
   LatestAmiId:
@@ -43,19 +44,17 @@ Parameters:
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
-      -
-        Label:
+      - Label:
           default: "EC2 Settings"
         Parameters:
-            - LatestAmiId
-            - InstanceType
-      -
-        Label:
+          - LatestAmiId
+          - InstanceType
+      - Label:
           default: "We create a boilerplate VPC to place the EC2 instance into"
         Parameters:
-            - VpcCidr
-            - PublicSubnetCidr
-            - PrivateSubnetWithNatCidr
+          - VpcCidr
+          - PublicSubnetCidr
+          - PrivateSubnetWithNatCidr
 
 Resources:
 
@@ -101,15 +100,14 @@ Resources:
         - Key: Name
           Value: Session Manager test Instnace in Private Subnet with NatGtwy
 
+  # By default, AWS Systems Manager doesn't have permission to perform actions on your instances.
+  # You must grant access by using an AWS Identity and Access Management (IAM) instance profile.
+  # https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-configuring-access-role.html
   Ec2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Path: /
       Roles: [ !Ref Ec2InstanceRole ]
-
-  # By default, AWS Systems Manager doesn't have permission to perform actions on your instances.
-  # You must grant access by using an AWS Identity and Access Management (IAM) instance profile.
-  # https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-configuring-access-role.html
   Ec2InstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -131,7 +129,7 @@ Resources:
   Ec2InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Test SG for SSM Session Manager
+      GroupDescription: SG with no ingress ports open
       VpcId: !Ref Vpc
       # ********* Demonstrating SSM Session Manager can connect to Instance with NO Security Group ingress openings
       # SecurityGroupIngress:
@@ -144,7 +142,10 @@ Resources:
 
   #######################################################
   # Everything below here is just a boilerplate VPC
-  # used to place the EC2 into a realistic scenario
+  # used to place the EC2 into one of 2 scenarios
+  #   - In Public Subnet with route to Internet Gateway
+  #   - In private subnet with route to NAT Gateway
+  #
   # There are no SSM specific features in the VPC, so
   # for the purposes of this exercise, it can be ignored.
   # \/  \/  \/  \/  \/  \/  \/  \/  \/  \/   \/   \/   \/
@@ -240,10 +241,9 @@ Outputs:
   SessionManagementListUrl:
     Description: The URL to the Session Management Console listing all instances it is aware of
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/systems-manager/session-manager/start-session?region=${AWS::Region}
-
   SessionManagementPublicSubnetInstanceUrl:
     Description: The URL to the Session Management Console for this instance
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/systems-manager/session-manager/${Ec2InPublicSubnet}?region=${AWS::Region}
-  SessionManagementPrivateSubneWithNattInstanceUrl:
+  SessionManagementPrivateSubneWithNatInstanceUrl:
     Description: The URL to the Session Management Console for this instance
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/systems-manager/session-manager/${Ec2InPrivateSubnetWithNatGtwy}?region=${AWS::Region}
