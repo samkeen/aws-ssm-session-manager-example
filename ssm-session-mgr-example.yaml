@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: 2010-09-09
 
 Description: >
   In this template we are demonstrating an EC2 with SSM Session Manager enabled.  We have two instances; one in
-  a public subnetThe and one in a private subnet.  SSM Agent running on the EC2 instances must be able to connect
+  a public subnet and one in a private subnet.  The SSM Agent running on the EC2 instances must be able to connect
   to Session Manager’s public endpoint.  Thus for the public instance we utilize its public ip and route to
   an Internet Gateway and for the private instance we utilize a route to a NAT Gateway.
   see: https://aws.amazon.com/blogs/aws/new-session-manager/
