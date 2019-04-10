@@ -4,7 +4,9 @@ Description: >
   Demonstration template showing EC2 creation.  We give that instance the AmazonEC2RoleforSSM Instance Profile
   allowing us to connect to is via SSM Session Manager.  We also set up CloudWatch Logs to elevate transparency
   of the process and aid in troubleshooting.
-  For this example you will need an existing VPC with a Public subnet.
+  For this example you will need an existing VPC with a Private subnet, thus it has not exposure to the Internet (no
+  InternetGateway, no NatGateway and no public IP.  Using VPC Private links, we will still be able to connect to it with
+  SSM Session Manager.
 
 Parameters:
   LatestAmiId:
@@ -112,17 +114,16 @@ Resources:
       # KeyName: NO SSH Key needed
       IamInstanceProfile: !Ref Ec2InstanceProfile
       NetworkInterfaces:
-        # The SSM Agent running on the EC2 instances must be able to connect to Session Manager?s
-        # public endpoint. You can also set up a PrivateLink connection to allow instances running
-        # in private VPCs (without Internet access or a public IP address) to connect to Session Manager.
-        - AssociatePublicIpAddress: true
+        # *************** PrivateLink is configured so we need no public IP
+        - AssociatePublicIpAddress: false
           DeviceIndex: 0
           GroupSet:
             - !Ref Ec2InstanceSecurityGroup
-          SubnetId: !Ref PublicSubnet1
+          # ************** We are in a PRIVATE subnet, no exposure to the Internet (No InternetGateway of NATGateway)
+          SubnetId: !Ref PrivateSubnet1
       Tags:
         - Key: Name
-          Value: SSM Session Manager Public Instance Test
+          Value: SSM Session Manager Private Instance Test
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
@@ -208,6 +209,12 @@ Resources:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: !Ref VpcCIDR
+      # as per docs, we need to enable both EnableDnsHostnames and EnableDnsSupport in this VPC so the SSM agent
+      # will be able to connect using the regular public DNS names for SSM
+      # https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-setting-up-vpc.html
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
   InternetGateway:
     Type: AWS::EC2::InternetGateway
   InternetGatewayAttachment:
@@ -257,26 +264,7 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub Private Subnet (AZ2)
-  NatGateway1EIP:
-    Type: AWS::EC2::EIP
-    DependsOn: InternetGatewayAttachment
-    Properties:
-      Domain: vpc
-  NatGateway2EIP:
-    Type: AWS::EC2::EIP
-    DependsOn: InternetGatewayAttachment
-    Properties:
-      Domain: vpc
-  NatGateway1:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGateway1EIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
-  NatGateway2:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGateway2EIP.AllocationId
-      SubnetId: !Ref PublicSubnet2
+
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -308,12 +296,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub Private Routes (AZ1)
-  DefaultPrivateRoute1:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable1
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway1
 
   PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -328,12 +310,6 @@ Resources:
         - Key: Name
           Value: !Sub Private Routes (AZ2)
 
-  DefaultPrivateRoute2:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable2
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway2
   PrivateSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -346,6 +322,101 @@ Resources:
       GroupName: "no-ingress-sg"
       GroupDescription: "Security group with no ingress rule"
       VpcId: !Ref VPC
+
+  # ****************************
+  # Here we build all the VPC endpoints needed in order for SSM Session Manager to be able to communicate with
+  # and EC2 instance in a private subnet (with not routes to the Internet)
+
+  # Open port 443 for SSM as per the docs
+  # Incoming connections: https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-setting-up-vpc.html
+  VpcEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Open 443 for SSM Session Manager for private subnets
+      VpcId: !Ref VPC
+      # allow traffic on 443 from the private subnets
+      SecurityGroupIngress:
+        - IpProtocol: TCP
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref PrivateSubnet1CIDR
+        - IpProtocol: TCP
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref PrivateSubnet2CIDR
+      SecurityGroupEgress:
+        - IpProtocol: -1 # all
+          FromPort: -1 # all
+          ToPort: -1 # all
+          CidrIp: 0.0.0.0/0
+
+  VpcEndpointInterfaceSsm:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VpcEndpointSecurityGroup
+  VpcEndpointInterfaceEc2messages:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VpcEndpointSecurityGroup
+  VpcEndpointInterfaceEc2:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VpcEndpointSecurityGroup
+  VpcEndpointInterfaceSsmmessages:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VpcEndpointSecurityGroup
+  VpcEndpointGatewayS3:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - '*'
+            Resource:
+              - 'arn:aws:s3:::*'
+      VpcId: !Ref VPC
+      RouteTableIds:
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+
 
 Outputs:
   SessionManagementUrl:

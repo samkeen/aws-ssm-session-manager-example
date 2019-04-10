@@ -49,7 +49,7 @@ The provided CloudFormation templates accommodate these preconditions, They are 
 The SSM Agent in pre-installed on some of the core AWS AMIs including the latest Amazon Linux[1] and 2, but you can 
 install it manually in other AMIs (and even on-prem). 
 In our CloudFormation templates here we use Amazon Linux[1] and 2, so this box is checked for us, no action required.
-If you are using older Amazon Linux[1] an AMIs that does not have the SSM agent pre-installed, see hhe 
+If you are using older Amazon Linux[1] an AMIs that does not have the SSM agent pre-installed, see the 
 [docs](https://docs.aws.amazon.com/systems-manager/latest/userguide/ssm-agent.html) for help with getting it installed.
 
 ### 2. EC2 Instance Profile Allowing SSM Management
