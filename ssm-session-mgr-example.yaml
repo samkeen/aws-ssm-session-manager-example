@@ -115,7 +115,7 @@ Resources:
         # ********** This is really the only adjustment we need to make to enable use of SSM Session Manager
         #            All the AWS::CloudFormation::Init and cloud init script work is setting up cloudwatch logs
         #            to give visibility to the SSM Agent actions.
-        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       AssumeRolePolicyDocument:
         Statement:
           - Effect: Allow
